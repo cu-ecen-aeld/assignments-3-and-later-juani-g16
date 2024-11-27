@@ -99,7 +99,11 @@ sudo mknod -m 600 dev/console c 5 1
 
 # TODO: Clean and build the writer utility
 cd ${FINDER_APP_DIR}
-make clean
+echo "Removing the old writer utility and compiling as a native application"
+if [ -f "writer" ] 
+then
+	make clean
+fi
 make CROSS_COMPILE=${CROSS_COMPILE}gcc
 
 
