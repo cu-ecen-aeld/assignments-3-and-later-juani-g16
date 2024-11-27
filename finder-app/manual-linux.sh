@@ -113,12 +113,9 @@ cp finder.sh ${OUTDIR}/rootfs/home
 cp writer ${OUTDIR}/rootfs/home
 
 # TODO: Chown the root directory
-cd ${OUTDIR}/rootfs
-sudo chown -R root:root *
+sudo chown -R root:root ${OUTDIR}/rootfs
 
 # TODO: Create initramfs.cpio.gz
 cd ${OUTDIR}/rootfs
 find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
-
-cd ${OUTDIR}
-gzip -f initramfs.cpio
+gzip -f ${OUTDIR}/initramfs.cpio
