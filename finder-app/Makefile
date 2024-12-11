@@ -1,5 +1,5 @@
 # Compiler
-CROSS_COMPILE = gcc
+CC=gcc
 
 # Target name
 TARGET = writer
@@ -8,8 +8,11 @@ TARGET = writer
 SRC = writer.c
 
 # Compile the program
-$(TARGET): $(SRC)
-	$(CROSS_COMPILE) -o $(TARGET) $(SRC)
+all:
+	$(CROSS_COMPILE)$(CC) -o $(TARGET) $(SRC)
+
+default:
+	$(CROSS_COMPILE)$(CC) -o $(TARGET) $(SRC)
 
 clean :
 	rm $(TARGET)
