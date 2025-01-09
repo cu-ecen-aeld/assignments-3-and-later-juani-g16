@@ -18,4 +18,10 @@ default:
 	$(CROSS_COMPILE)$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
 
 clean :
-	rm $(TARGET)
+	@echo "Cleaning up..."
+	@if [ -f $(TARGET) ]; then \
+		rm -f $(TARGET); \
+		echo "$(TARGET) removed."; \
+	else \
+		echo "$(TARGET) does not exist."; \
+	fi
