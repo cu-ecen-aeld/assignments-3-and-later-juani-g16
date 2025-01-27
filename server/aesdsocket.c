@@ -122,12 +122,11 @@ int main(int argc, char const *argv[])
             if (caught_signal)
             {
                 list_cleanup();
-                pthread_join(timer_thread, NULL);
-                close(socketfd);
+                shutdown(socketfd, SHUT_RDWR);
                 remove(FILEPATH);
                 syslog(LOG_DEBUG, "Caught signal, exiting");
                 pthread_mutex_destroy(&file_mutex);
-                break;
+                exit(0);
             }
             free(datap);
             syslog(LOG_ERR, "Error accepting connection: %s.", strerror(errno));
@@ -356,7 +355,6 @@ void *append_timestamp(void *args)
             return NULL;
         }
 
-        // Format timestamp: "timestamp:Thu, 23 Jan 2025 19:00:00\n"
         if (strftime(timestamp, sizeof(timestamp), "timestamp: %a, %d %b %Y %T\n", time_info) == 0)
         {
             fprintf(stderr, "Error formatting timestamp\n");
@@ -364,7 +362,6 @@ void *append_timestamp(void *args)
         }
 
         // Append timestamp to file
-        // printf("Appending timestamp: %s\n", timestamp);
         write_to_file(timestamp);
 
         // Sleep for 10 seconds before the next append
