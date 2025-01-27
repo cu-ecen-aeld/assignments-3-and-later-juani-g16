@@ -19,7 +19,7 @@
 
 #define SERVER_PORT "9000"
 #define FILEPATH "/var/tmp/aesdsocketdata"
-#define BUFFSIZE 100 * 1024
+#define BUFFSIZE 10 * 1024
 
 bool caught_signal = false;
 pthread_mutex_t file_mutex;
@@ -169,9 +169,11 @@ void list_cleanup(void)
 
 static void *handle_connection(void *arg)
 {
-    int datafd;
     slist_data_t *datap = (slist_data_t *)arg;
-    ssize_t bytes_received, bytes_written, bytes_sent;
+    ssize_t bytes_received, bytes_sent;
+    size_t bytes_read;
+    char *file_buffer;
+    long file_size;
     char *buffer = (char *)calloc(BUFFSIZE, sizeof(char));
     if (buffer == NULL)
     {
@@ -186,52 +188,75 @@ static void *handle_connection(void *arg)
         if (bytes_received == -1)
         {
             syslog(LOG_ERR, "Error receiving data from client: %s.", strerror(errno));
-            break;
+            free(buffer);
+            close(datap->acceptedsocket);
+            return NULL;
         }
 
         if (buffer[bytes_received - 1] == '\n')
         {
+            write_to_file(buffer);
             /*File operations */
             pthread_mutex_lock(&file_mutex);
-            datafd = open(FILEPATH, O_RDWR | O_APPEND | O_CREAT, 0644);
-            if (datafd < 0)
+            FILE *file = fopen(FILEPATH, "r");
+            if (file == NULL)
             {
-                syslog(LOG_ERR, "Error opening local file: %s.", strerror(errno));
-                break;
+                syslog(LOG_ERR, "Error opening file: %s.", strerror(errno));
+                free(buffer);
+                close(datap->acceptedsocket);
+                pthread_mutex_unlock(&file_mutex);
+                return NULL;
             }
-            bytes_written = write(datafd, buffer, bytes_received);
-            total_bytes += bytes_written;
-            lseek(datafd, 0, SEEK_SET);
-            if (bytes_written == -1)
+            // Move the file pointer to the end to determine the size
+            fseek(file, 0, SEEK_END);
+            file_size = ftell(file);
+            fseek(file, 0, SEEK_SET); // Reset to the beginning of the file
+            // Allocate buffer for file content
+            file_buffer = (char *)calloc((size_t)file_size, sizeof(char));
+            if (file_buffer == NULL)
             {
-                syslog(LOG_ERR, "Error writing local file: %s.", strerror(errno));
-                break;
+                syslog(LOG_ERR, "Error allocating memory for file buffer: %s.", strerror(errno));
+                free(buffer);
+                close(datap->acceptedsocket);
+                fclose(file);
+                pthread_mutex_unlock(&file_mutex);
+                return NULL;
             }
-            memset(buffer, 0, BUFFSIZE);
-            bytes_received = read(datafd, buffer, total_bytes);
-            close(datafd);
-            pthread_mutex_unlock(&file_mutex);
-            /*End of file operations */
-            if (bytes_received == -1)
-            {
-                syslog(LOG_ERR, "Error reading local file: %s.", strerror(errno));
-                break;
-            }
-            bytes_sent = write(datap->acceptedsocket, buffer, bytes_received);
-            if (bytes_sent == -1)
+            // Read the file content into buffer
+            bytes_read = fread(file_buffer, 1, file_size, file);
+            if (bytes_read != file_size)
             {
                 syslog(LOG_ERR, "Error reading file: %s.", strerror(errno));
-                break;
+                free(buffer);
+                free(file_buffer);
+                close(datap->acceptedsocket);
+                fclose(file);
+                pthread_mutex_unlock(&file_mutex);
+                return NULL;
             }
-            syslog(LOG_INFO, "Closed connection from %s", datap->ipaddress);
+            /*End of file operations*/
+
+            // Send the buffer content over the socket
+            bytes_sent = write(datap->acceptedsocket, file_buffer, bytes_read);
+            if (bytes_sent == -1)
+            {
+                syslog(LOG_ERR, "Error sending file content: %s.", strerror(errno));
+                free(buffer);
+                free(file_buffer);
+                close(datap->acceptedsocket);
+                fclose(file);
+                pthread_mutex_unlock(&file_mutex);
+                return NULL;
+            }
+            fclose(file);
+            pthread_mutex_unlock(&file_mutex);
             break;
         }
     }
+    // Clean up
     free(buffer);
+    free(file_buffer);
     close(datap->acceptedsocket);
-    pthread_mutex_lock(&file_mutex);
-    close(datafd);
-    pthread_mutex_unlock(&file_mutex);
     datap->thread_complete = true;
     return NULL;
 }
