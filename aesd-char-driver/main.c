@@ -94,6 +94,9 @@ int aesd_init_module(void)
 {
     dev_t dev = 0;
     int result;
+
+    PDEBUG("Initializing aesdchar module\n");
+
     result = alloc_chrdev_region(&dev, aesd_minor, 1,
             "aesdchar");
     aesd_major = MAJOR(dev);
@@ -107,6 +110,12 @@ int aesd_init_module(void)
      * initialize the AESD specific portion of the device
      */
 
+    aesd_device.entry.buffptr = NULL;
+    aesd_device.entry.size = 0;
+    aesd_device.size = 0;
+
+    mutex_init(&aesd_device.lock);
+
     aesd_device.buffer = kmalloc(sizeof(struct aesd_circular_buffer), GFP_KERNEL);
     if (!aesd_device.buffer)
     {
@@ -114,11 +123,6 @@ int aesd_init_module(void)
         goto fail;
     }
     aesd_circular_buffer_init(aesd_device.buffer);
-    aesd_device.entry.buffptr = NULL;
-    aesd_device.entry.size = 0;
-    aesd_device.size = 0;
-
-    mutex_init(&aesd_device.lock);
 
     /* end initialize the AESD specific portion of the device */
 
@@ -127,6 +131,8 @@ int aesd_init_module(void)
     if( result ) {
         unregister_chrdev_region(dev, 1);
     }
+
+    PDEBUG("Initialization complete with result: %d\n", result);
     return result;
 
 fail:
@@ -136,15 +142,23 @@ fail:
 
 void aesd_cleanup_module(void)
 {
+    PDEBUG("Cleaning up aesdchar module\n");
     dev_t devno = MKDEV(aesd_major, aesd_minor);
-
     cdev_del(&aesd_device.cdev);
 
     /**
-     * TODO: cleanup AESD specific poritions here as necessary
+     * cleanup AESD specific poritions here as necessary
      */
+    kfree(aesd_device.buffer);
+    aesd_device.buffer = NULL;
+    mutex_destroy(&aesd_device.lock);
 
+    /**
+     * end cleanup AESD specific poritions here as necessary
+     */
     unregister_chrdev_region(devno, 1);
+
+    PDEBUG("Cleanup complete\n");
 }
 
 
