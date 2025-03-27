@@ -29,10 +29,14 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
-    PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+    PDEBUG("aesd open");
+
+    struct aesd_dev *dev; /* device information */
+    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev; /* for other methods */
+
+    PDEBUG("End of aesd open");
+
     return 0;
 }
 
