@@ -27,6 +27,21 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
+void write_entry_to_buffer(struct aesd_dev *dev)
+{
+    if (dev->entry.buffptr[dev->entry.size - 1] == '\n')
+    {
+        const char *removed_entry = aesd_circular_buffer_add_entry(dev->buffer, &(dev->entry));
+        if (removed_entry)
+        {
+            PDEBUG("Removed entry: %s", removed_entry);
+            kfree(removed_entry);
+        }
+        dev->entry.buffptr = NULL;
+        dev->entry.size = 0;
+    }
+}
+
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("aesd open");
@@ -65,9 +80,73 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+
+    struct aesd_dev *dev = filp->private_data;
+
+    // Lock the mutex
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        retval = -ERESTARTSYS;
+        PDEBUG("failed to lock mutex");
+        goto no_mutex_out;
+    }
+
+    // Partial write
+    if (dev->entry.buffptr)
+    {
+        PDEBUG("Partial write going on");
+        size_t remaining = dev->entry.size + count;
+        char *new_buffptr = kmalloc(remaining, GFP_KERNEL);
+        if (!new_buffptr)
+        {
+            PDEBUG("Failed to allocate memory for new_buffptr");
+            goto mutex_out;
+        }
+        memcpy(new_buffptr, dev->entry.buffptr, dev->entry.size);
+
+        // Copy the data from userspace to the new buffer in kernel space
+        if (copy_from_user(new_buffptr + dev->entry.size, buf, count))
+        {
+            PDEBUG("Failed to copy data from user");
+            retval = -EFAULT;
+            goto mutex_out;
+        }
+        kfree(dev->entry.buffptr);
+        dev->entry.buffptr = new_buffptr;
+        dev->entry.size = remaining;
+
+        write_entry_to_buffer(dev);
+    }
+    else
+    {
+        PDEBUG("New write");
+        dev->entry.buffptr = kmalloc(count, GFP_KERNEL);
+        dev->entry.size = count;
+        if (!dev->entry.buffptr)
+        {
+            PDEBUG("Failed to allocate memory for buffptr");
+            goto mutex_out;
+        }
+
+        if (copy_from_user(dev->entry.buffptr, buf, dev->entry.size))
+        {
+            PDEBUG("Failed to copy data from user");
+            retval = -EFAULT;
+            goto mutex_out;
+        }
+        write_entry_to_buffer(dev);
+    }
+
+    *f_pos += count;
+    retval = count;
+
+mutex_out:
+    PDEBUG("Unlocking mutex");
+    mutex_unlock(&dev->lock);
+    return retval;
+
+no_mutex_out:
+    PDEBUG("write failed, returning %zd", retval);
     return retval;
 }
 struct file_operations aesd_fops = {
