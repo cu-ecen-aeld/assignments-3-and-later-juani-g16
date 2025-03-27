@@ -18,10 +18,11 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Juan I. Giorgetti"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -103,8 +104,23 @@ int aesd_init_module(void)
     memset(&aesd_device,0,sizeof(struct aesd_dev));
 
     /**
-     * TODO: initialize the AESD specific portion of the device
+     * initialize the AESD specific portion of the device
      */
+
+    aesd_device.buffer = kmalloc(sizeof(struct aesd_circular_buffer), GFP_KERNEL);
+    if (!aesd_device.buffer)
+    {
+        result = -ENOMEM;
+        goto fail;
+    }
+    aesd_circular_buffer_init(aesd_device.buffer);
+    aesd_device.entry.buffptr = NULL;
+    aesd_device.entry.size = 0;
+    aesd_device.size = 0;
+
+    mutex_init(&aesd_device.lock);
+
+    /* end initialize the AESD specific portion of the device */
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -113,6 +129,9 @@ int aesd_init_module(void)
     }
     return result;
 
+fail:
+    aesd_cleanup_module();
+    return result;
 }
 
 void aesd_cleanup_module(void)
