@@ -73,7 +73,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     size_t bytes_read = 0;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
 
-    struct scull_dev *dev = filp->private_data;
+    struct aesd_dev *dev = filp->private_data;
 
     if (mutex_lock_interruptible(&dev->lock))
     {
