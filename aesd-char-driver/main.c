@@ -68,10 +68,75 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
+    struct aesd_buffer_entry *entry;
+    size_t entry_offset = 0;
+    size_t bytes_read = 0;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+
+    struct scull_dev *dev = filp->private_data;
+
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        retval = -ERESTARTSYS;
+        PDEBUG("failed to lock mutex");
+        goto no_mutex_out;
+    }
+
+    // Read is past the end of the file
+    if (*f_pos >= dev->size)
+    {
+        PDEBUG("Read past end of file");
+        goto mutex_out;
+    }
+
+    // Read too much data
+    if (*f_pos + count > dev->size)
+    {
+        count = dev->size - *f_pos;
+    }
+
+    // Find the entry in the circular buffer
+    entry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entry_offset);
+
+    // Check if the entry is found in the circular buffer
+    if (entry == NULL)
+    {
+        PDEBUG("No entry found in circular buffer");
+        retval = -EFAULT;
+        goto mutex_out;
+    }
+
+    bytes_read = entry->size - entry_offset;
+    if (bytes_read < 0)
+    {
+        PDEBUG("Invalid bytes read");
+        retval = -EFAULT;
+        goto mutex_out;
+    }
+
+    if (count > bytes_read)
+    {
+        count = bytes_read;
+    }
+    // Copy the data from the entry to userspace
+    if (copy_to_user(buf, entry->buffptr + entry_offset, count))
+    {
+        PDEBUG("Failed to copy data to user");
+        retval = -EFAULT;
+        goto mutex_out;
+    }
+    // Update the file position
+    *f_pos += count;
+    retval = count;
+    PDEBUG("Read %zu bytes from offset %zu", count, *f_pos);
+
+mutex_out:
+    PDEBUG("Unlocking mutex");
+    mutex_unlock(&dev->lock);
+    return retval;
+
+no_mutex_out:
+    PDEBUG("read failed, returning %zd", retval);
     return retval;
 }
 
@@ -170,8 +235,6 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
     }
     return err;
 }
-
-
 
 int aesd_init_module(void)
 {
