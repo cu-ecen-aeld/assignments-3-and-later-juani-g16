@@ -14,11 +14,17 @@
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <pthread.h>
-#include <time.h>
 #include "queue.h"
 
-#define SERVER_PORT "9000"
+#define USE_AESD_CHAR_DEVICE 1
+
+#ifdef USE_AESD_CHAR_DEVICE
+#define FILEPATH "/dev/aesdchar"
+#else
 #define FILEPATH "/var/tmp/aesdsocketdata"
+#endif
+
+#define SERVER_PORT "9000"
 #define BUFFSIZE 10 * 1024
 
 bool caught_signal = false;
@@ -42,7 +48,6 @@ slist_data_t *tdatap = NULL;
 static void signal_handler(int signal_number);
 static int init_socket();
 static void *handle_connection(void *arg);
-void *append_timestamp(void *args);
 void write_to_file(const char *buffer);
 void list_cleanup(void);
 
@@ -53,7 +58,6 @@ int main(int argc, char const *argv[])
     socklen_t clilen;
     struct sigaction new_action;
     pid_t daemonpid;
-    pthread_t timer_thread;
     slist_data_t *datap = NULL;
 
     pthread_mutex_init(&file_mutex, NULL);
@@ -95,13 +99,6 @@ int main(int argc, char const *argv[])
     }
 
     SLIST_INIT(&head);
-
-    // Create a thread for appending timestamps
-    if (pthread_create(&timer_thread, NULL, append_timestamp, NULL) != 0)
-    {
-        fprintf(stderr, "Error creating thread\n");
-        return -1;
-    }
 
     while (1)
     {
@@ -328,46 +325,6 @@ static void signal_handler(int signal_number)
         break;
     }
     errno = errno_saved;
-}
-
-void *append_timestamp(void *args)
-{
-    char timestamp[100];
-    time_t current_time;
-    struct tm *time_info;
-
-    // for (int i = 0; i < 10; i++)
-    while (!caught_signal)
-    {
-        // Get current system time
-        current_time = time(NULL);
-        if (current_time == ((time_t)-1))
-        {
-            perror("Error getting current time");
-            return NULL;
-        }
-
-        // Convert to local time and format as RFC 2822
-        time_info = localtime(&current_time);
-        if (time_info == NULL)
-        {
-            perror("Error converting to local time");
-            return NULL;
-        }
-
-        if (strftime(timestamp, sizeof(timestamp), "timestamp: %a, %d %b %Y %T\n", time_info) == 0)
-        {
-            fprintf(stderr, "Error formatting timestamp\n");
-            return NULL;
-        }
-
-        // Append timestamp to file
-        write_to_file(timestamp);
-
-        // Sleep for 10 seconds before the next append
-        sleep(10);
-    }
-    return NULL;
 }
 
 void write_to_file(const char *buffer)
