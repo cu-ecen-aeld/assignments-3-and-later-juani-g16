@@ -8,30 +8,44 @@
 #ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
 #define AESD_CHAR_DRIVER_AESDCHAR_H_
 
+#define AESD_DEBUG 1 // Remove comment on this line to enable debug
+
+#undef PDEBUG /* undef it, just in case */
+#ifdef AESD_DEBUG
+#ifdef __KERNEL__
+/* This one if debugging is on, and kernel space */
+#define PDEBUG(fmt, args...) printk(KERN_DEBUG "aesdchar: " fmt, ##args)
+#else
+/* This one for user space */
+#define PDEBUG(fmt, args...) fprintf(stderr, fmt, ##args)
+#endif
+#else
+#define PDEBUG(fmt, args...) /* not debugging: nothing */
+#endif
+
 #include "aesd-circular-buffer.h"
+
+// Functions prototypes
+void clean_aesd(void);
+int checkEOLChar(const char *buff, const int size);
+int aesd_open(struct inode *inode, struct file *filp);
+int aesd_release(struct inode *inode, struct file *filp);
+ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
+ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+int aesd_init_module(void);
+void aesd_cleanup_module(void);
 
 struct aesd_dev
 {
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
-    struct aesd_circular_buffer *buffer; /* Circular buffer to store data */
-    struct aesd_buffer_entry entry;      /* Buffer entry to store data */
-    unsigned long size;                  /* amount of data stored here */
-    struct mutex lock;                   /* Mutex to protect read and write operations */
-    struct cdev cdev;                    /* Char device structure      */
+    struct aesd_buffer_entry entry;      /* buffer for partial data     */
+    struct aesd_circular_buffer bufferP; /* data buffer                 */
+    int readCounter;                     /* End condition for read loop */
+    // unsigned long size;                   /* amount of data stored here */
+    struct mutex lock; /* mutual exclusion semaphore  */
+    struct cdev cdev;  /* Char device structure       */
 };
 
-/*Function prototypes*/
-void write_entry_to_buffer(struct aesd_dev *dev);
-int aesd_open(struct inode *inode, struct file *filp);
-int aesd_release(struct inode *inode, struct file *filp);
-ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
-                  loff_t *f_pos);
-ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
-                   loff_t *f_pos);
-static int aesd_setup_cdev(struct aesd_dev *dev);
-int aesd_init_module(void);
-void aesd_cleanup_module(void);
+// This prototype has to happen after its input definition
+void write_entry_into_buffer(struct aesd_dev *dev);
 
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
