@@ -12,9 +12,6 @@ else
 fi
 
 if [ -e ${module}.ko ]; then
-    echo "Loading local built file ${module}.ko"
-    modprobe ${module} || exit 1
-else
     echo "Local file ${module}.ko not found, attempting to modprobe"
     modprobe ${module} || exit 1
 fi
