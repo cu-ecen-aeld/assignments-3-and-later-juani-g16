@@ -120,10 +120,7 @@ int main(int argc, char const *argv[])
             {
                 list_cleanup();
                 shutdown(socketfd, SHUT_RDWR);
-                if (USE_AESD_CHAR_DEVICE != 1)
-                {
-                    remove(FILEPATH);
-                }
+                // remove(FILEPATH);
                 syslog(LOG_DEBUG, "Caught signal, exiting");
                 pthread_mutex_destroy(&file_mutex);
                 exit(0);
