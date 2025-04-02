@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include "queue.h"
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define USE_AESD_CHAR_DEVICE 1
 
@@ -179,6 +180,16 @@ static void *handle_connection(void *arg)
         return NULL;
     }
 
+    int file_fd = open(FILEPATH, O_RDWR);
+    if (file_fd == -1)
+    {
+        syslog(LOG_ERR, "Error opening file descriptor: %s.", strerror(errno));
+        free(buffer);
+        close(datap->acceptedsocket);
+        datap->thread_complete = true;
+        return NULL;
+    }
+
     while ((bytes_received = read(datap->acceptedsocket, buffer, BUFFSIZE - 1)) > 0)
     {
         if (bytes_received == -1)
@@ -186,27 +197,45 @@ static void *handle_connection(void *arg)
             syslog(LOG_ERR, "Error receiving data from client: %s.", strerror(errno));
             free(buffer);
             close(datap->acceptedsocket);
+            close(file_fd);
             return NULL;
+        }
+
+        buffer[bytes_received] = '\0';
+
+        if (strncmp(buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0)
+        {
+            unsigned int write_cmd, write_cmd_offset;
+            if (sscanf(buffer + 19, "%u,%u", &write_cmd, &write_cmd_offset) == 2)
+            {
+                struct aesd_seekto seekto;
+                seekto.write_cmd = write_cmd;
+                seekto.write_cmd_offset = write_cmd_offset;
+
+                if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto) == -1)
+                {
+                    syslog(LOG_ERR, "Error performing ioctl: %s.", strerror(errno));
+                }
+                else
+                {
+                    syslog(LOG_INFO, "Performed ioctl with write_cmd=%u, write_cmd_offset=%u", write_cmd, write_cmd_offset);
+                }
+            }
+            else
+            {
+                syslog(LOG_ERR, "Invalid AESDCHAR_IOCSEEKTO format.");
+            }
+            continue; // Do not write this command to the file
         }
 
         if (buffer[bytes_received - 1] == '\n')
         {
             write_to_file(buffer);
-            /*File operations */
+            /* File operations */
             pthread_mutex_lock(&file_mutex);
-            FILE *file = fopen(FILEPATH, "r");
-            if (file == NULL)
-            {
-                syslog(LOG_ERR, "Error opening file: %s.", strerror(errno));
-                free(buffer);
-                close(datap->acceptedsocket);
-                pthread_mutex_unlock(&file_mutex);
-                return NULL;
-            }
             // Move the file pointer to the end to determine the size
-            fseek(file, 0, SEEK_END);
-            file_size = ftell(file);
-            fseek(file, 0, SEEK_SET); // Reset to the beginning of the file
+            file_size = lseek(file_fd, 0, SEEK_END);
+            lseek(file_fd, 0, SEEK_SET); // Reset to the beginning of the file
             // Allocate buffer for file content
             file_buffer = (char *)calloc((size_t)file_size, sizeof(char));
             if (file_buffer == NULL)
@@ -214,24 +243,23 @@ static void *handle_connection(void *arg)
                 syslog(LOG_ERR, "Error allocating memory for file buffer: %s.", strerror(errno));
                 free(buffer);
                 close(datap->acceptedsocket);
-                fclose(file);
+                close(file_fd);
                 pthread_mutex_unlock(&file_mutex);
                 return NULL;
             }
             // Read the file content into buffer
-            bytes_read = fread(file_buffer, 1, file_size, file);
+            bytes_read = read(file_fd, file_buffer, file_size);
             if (bytes_read != file_size)
             {
                 syslog(LOG_ERR, "Error reading file: %s.", strerror(errno));
                 free(buffer);
                 free(file_buffer);
                 close(datap->acceptedsocket);
-                fclose(file);
+                close(file_fd);
                 pthread_mutex_unlock(&file_mutex);
                 return NULL;
             }
-            /*End of file operations*/
-
+            /* End of file operations */
             // Send the buffer content over the socket
             bytes_sent = write(datap->acceptedsocket, file_buffer, bytes_read);
             if (bytes_sent == -1)
@@ -240,11 +268,10 @@ static void *handle_connection(void *arg)
                 free(buffer);
                 free(file_buffer);
                 close(datap->acceptedsocket);
-                fclose(file);
+                close(file_fd);
                 pthread_mutex_unlock(&file_mutex);
                 return NULL;
             }
-            fclose(file);
             pthread_mutex_unlock(&file_mutex);
             break;
         }
@@ -253,6 +280,7 @@ static void *handle_connection(void *arg)
     free(buffer);
     free(file_buffer);
     close(datap->acceptedsocket);
+    close(file_fd);
     datap->thread_complete = true;
     return NULL;
 }

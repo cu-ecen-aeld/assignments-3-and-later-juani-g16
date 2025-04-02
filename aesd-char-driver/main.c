@@ -28,6 +28,102 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
+static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset)
+{
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_buffer_entry *entry;
+    size_t total_size = 0;
+    int i, retval = 0;
+
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        retval = -ERESTARTSYS;
+        goto no_mutex_error;
+    }
+
+    // Validate the write_cmd index
+    if (write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+    {
+        retval = -EINVAL;
+        goto end;
+    }
+
+    // Traverse the circular buffer to locate the specified write_cmd
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->bufferP, i)
+    {
+        if (i == write_cmd)
+        {
+            // Validate the write_cmd_offset
+            if (write_cmd_offset >= entry->size)
+            {
+                retval = -EINVAL;
+                goto end;
+            }
+
+            // Adjust the file offset
+            filp->f_pos = total_size + write_cmd_offset;
+            goto end;
+        }
+        total_size += entry->size;
+    }
+
+    goto end; // If the write_cmd was not found
+
+end:
+    mutex_unlock(&dev->lock);
+    return retval;
+
+no_mutex_error:
+    return retval;
+}
+
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
+{
+    struct aesd_dev *dev = filp->private_data;
+    loff_t newpos;
+    loff_t total_size = 0;
+
+    // Calculate total bytes stored in buffer
+    struct aesd_buffer_entry *entry;
+    uint8_t index;
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->bufferP, index)
+    {
+        total_size += entry->size;
+    }
+
+    if (mutex_lock_interruptible(&dev->lock))
+        return -ERESTARTSYS;
+
+    switch (whence)
+    {
+    case SEEK_SET:
+        newpos = offset;
+        break;
+    case SEEK_CUR:
+        newpos = filp->f_pos + offset;
+        break;
+    case SEEK_END:
+        newpos = dev->bufferP.out_offs + offset;
+        break;
+    default:
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    if (newpos < 0 || newpos > total_size)
+    {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+    filp->f_pos = newpos;
+
+    mutex_unlock(&dev->lock);
+
+    PDEBUG("llseek: offset=%lld whence=%d -> new pos=%lld", offset, whence, newpos);
+
+    return newpos;
+}
+
 void clean_aesd(void)
 {
     uint8_t index;
@@ -224,6 +320,8 @@ struct file_operations aesd_fops = {
     .write = aesd_write,
     .open = aesd_open,
     .release = aesd_release,
+    .unlocked_ioctl = aesd_ioctl,
+    .llseek = aesd_llseek,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
@@ -274,6 +372,40 @@ void aesd_cleanup_module(void)
     cdev_del(&aesd_device.cdev);
     clean_aesd();
     unregister_chrdev_region(devno, 1);
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    int err = 0;
+    int retval = 0;
+    /*
+     * extract the type and number bitfields, and don't decode
+     * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
+     */
+    if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC)
+        return -ENOTTY;
+    if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
+        return -ENOTTY;
+
+    switch (cmd)
+    {
+    case AESDCHAR_IOCSEEKTO:
+        struct aesd_seekto seekto;
+        PDEBUG("AESDCHAR_IOCSEEKTO");
+        if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto) != 0))
+        {
+            retval = -EFAULT;
+        }
+        else
+        {
+            retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+        }
+        break;
+    default:
+        retval = -ENOTTY;
+        break;
+    }
+    return retval;
 }
 
 module_init(aesd_init_module);
